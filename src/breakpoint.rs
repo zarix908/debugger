@@ -43,5 +43,7 @@ impl Breakpoint {
             )
             .expect("failed to poke breakpoint instruction");
         };
+
+        self.enabled = enable;
     }
 }
