@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     io::{self, BufRead},
     panic,
-    process::exit,
+    process::exit, hash::Hash, os::raw::c_ulonglong,
 };
 
 use nix::{
@@ -68,5 +68,37 @@ impl Debugger {
         let mut breakpoint = Breakpoint::new(self.program_pid, addr);
         breakpoint.switch(true);
         self.breakpoints.insert(addr, breakpoint);
+    }
+
+    fn get_register_value(&self, name: &str) -> u64 {
+        let regs = ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
+        return *(HashMap::<&str, u64>::from([
+            ("r15", regs.r15),
+            ("r14", regs.r14),
+            ("r13", regs.r13),
+            ("r12", regs.r12),
+            ("rbp", regs.rbp),
+            ("rbx", regs.rbx),
+            ("r11", regs.r11),
+            ("r10", regs.r10),
+            ("r9", regs.r9),
+            ("r8", regs.r8),
+            ("rax", regs.rax),
+            ("rcx", regs.rcx),
+            ("rdx", regs.rdx),
+            ("rsi", regs.rsi),
+            ("rdi", regs.rdi),
+            ("rip"): ::c_ulonglong,держи передачу
+            pub cs: ::c_ulonglong,
+            pub eflags: ::c_ulonglong,
+            pub rsp: ::c_ulonglong,
+            pub ss: ::c_ulonglong,
+            pub fs_base: ::c_ulonglong,
+            pub gs_base: ::c_ulonglong,
+            pub ds: ::c_ulonglong,
+            pub es: ::c_ulonglong,
+            pub fs: ::c_ulonglong,
+            pub gs: ::c_ulonglong,
+        ]).get(name).unwrap());
     }
 }
