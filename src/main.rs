@@ -1,5 +1,6 @@
 mod breakpoint;
 pub mod debugger;
+mod reg;
 
 use debugger::Debugger;
 use nix::{
