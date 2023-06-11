@@ -46,4 +46,8 @@ impl Breakpoint {
 
         self.enabled = enable;
     }
+
+    pub fn enabled(&self) -> bool {
+        return self.enabled;
+    }
 }

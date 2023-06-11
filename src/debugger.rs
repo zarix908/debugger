@@ -87,8 +87,11 @@ impl Debugger {
         };
     }
 
-    fn continue_execution(&self) {
+    fn continue_execution(&mut self) {
+        self.step_over_breakpoint();
+
         ptrace::cont(Pid::from_raw(self.program_pid), None).expect("failed to continue program");
+
         let status = waitpid(Pid::from_raw(self.program_pid), None).expect("failed to wait pid");
         if let wait::WaitStatus::Exited(_, status) = status {
             println!("Process exited with status: {}.", status);
@@ -223,9 +226,39 @@ impl Debugger {
     }
 
     fn write_memory(&self, addr: u64, value: i64) {
-        unsafe { 
-            ptrace::write(Pid::from_raw(self.program_pid), addr as *mut c_void, value as *mut c_void)
-            .expect("failed to peek instruction"); 
+        unsafe {
+            ptrace::write(
+                Pid::from_raw(self.program_pid),
+                addr as *mut c_void,
+                value as *mut c_void,
+            )
+            .expect("failed to peek instruction");
         };
+    }
+
+    fn step_over_breakpoint(&mut self) {
+        let prev_instruction_addr = self.get_register_value(RegSelector::Reg(Reg::RIP)) - 1;
+
+        if let None = self.breakpoints.get(&prev_instruction_addr) {
+            return;
+        }
+
+        if !self
+            .breakpoints
+            .get(&prev_instruction_addr)
+            .unwrap()
+            .enabled()
+        {
+            return;
+        }
+
+        self.set_register_value(RegSelector::Reg(Reg::RIP), prev_instruction_addr);
+
+        let bp = self.breakpoints.get_mut(&prev_instruction_addr).unwrap();
+        bp.switch(false);
+        let pid = Pid::from_raw(self.program_pid);
+        ptrace::step(pid, None).expect("failed to single step program");
+        waitpid(pid, None).expect("failed to wait pid");
+        bp.switch(true);
     }
 }
