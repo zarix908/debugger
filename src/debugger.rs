@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     io::{self, BufRead},
+    os::raw::c_void,
     panic,
     process::exit,
 };
@@ -63,11 +64,24 @@ impl Debugger {
                     ),
                     "write" => {
                         let value =
-                            u64::from_str_radix(args[3], 16).expect("failed to parse address");
+                            u64::from_str_radix(args[3], 16).expect("failed to parse value");
                         self.set_register_value(RegSelector::Name(args[2]), value)
                     }
                     _ => panic!("wrong command"),
                 };
+            }
+            "memory" => {
+                let addr = u64::from_str_radix(args[2], 16).expect("failed to parse address");
+
+                match args[1] {
+                    "read" => println!("{:#X}", self.read_memory(addr)),
+                    "write" => {
+                        let value =
+                            i64::from_str_radix(args[3], 16).expect("failed to parse value");
+                        self.write_memory(addr, value);
+                    }
+                    _ => panic!("wrong command"),
+                }
             }
             _ => panic!("wrong command"),
         };
@@ -122,7 +136,7 @@ impl Debugger {
         }
     }
 
-    pub fn set_register_value(&self, reg: RegSelector, value: u64) {
+    fn set_register_value(&self, reg: RegSelector, value: u64) {
         let mut regs =
             ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
 
@@ -201,5 +215,17 @@ impl Debugger {
         for i in 0..26 {
             println!("{}: {:#X}", names[i], regs[i]);
         }
+    }
+
+    fn read_memory(&self, addr: u64) -> i64 {
+        ptrace::read(Pid::from_raw(self.program_pid), addr as *mut c_void)
+            .expect("failed to peek instruction")
+    }
+
+    fn write_memory(&self, addr: u64, value: i64) {
+        unsafe { 
+            ptrace::write(Pid::from_raw(self.program_pid), addr as *mut c_void, value as *mut c_void)
+            .expect("failed to peek instruction"); 
+        };
     }
 }
