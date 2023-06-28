@@ -9,6 +9,7 @@ use std::{
 use nix::{
     sys::{
         ptrace,
+        signal::Signal,
         wait::{self, waitpid},
     },
     unistd::Pid,
@@ -16,25 +17,33 @@ use nix::{
 
 use crate::{
     breakpoint::Breakpoint,
-    reg::{self, Reg, RegSelector},
+    reg::{Reg, RegSelector},
 };
 
-pub struct Debugger {
-    program_name: String,
+pub struct Debugger<'a> {
     program_pid: i32,
+    dwarf: gimli::Dwarf<gimli::EndianSlice<'a, gimli::RunTimeEndian>>,
+    load_addr: u64,
     breakpoints: HashMap<u64, Breakpoint>,
 }
 
-impl Debugger {
-    pub fn new(program_name: String, program_pid: i32) -> Debugger {
+impl<'a> Debugger<'a> {
+    pub fn new(
+        program_pid: i32,
+        dwarf: gimli::Dwarf<gimli::EndianSlice<'a, gimli::RunTimeEndian>>,
+        load_addr: u64,
+    ) -> Debugger<'a> {
         Debugger {
-            program_name,
             program_pid,
+            dwarf,
+            load_addr,
             breakpoints: HashMap::new(),
         }
     }
 
     pub fn run(&mut self) {
+        println!("Starting debugging process {}.", self.program_pid);
+
         waitpid(Pid::from_raw(self.program_pid), None).expect("failed to wait pid");
 
         let stdin = io::stdin();
@@ -60,12 +69,12 @@ impl Debugger {
                     "read" => println!(
                         "{}: {:#X}",
                         args[2],
-                        self.get_register_value(RegSelector::Name(args[2]))
+                        self.get_register_value(&RegSelector::Name(args[2]))
                     ),
                     "write" => {
                         let value =
                             u64::from_str_radix(args[3], 16).expect("failed to parse value");
-                        self.set_register_value(RegSelector::Name(args[2]), value)
+                        self.set_register_value(&RegSelector::Name(args[2]), value)
                     }
                     _ => panic!("wrong command"),
                 };
@@ -88,15 +97,12 @@ impl Debugger {
     }
 
     fn continue_execution(&mut self) {
+        let pid = Pid::from_raw(self.program_pid);
+
         self.step_over_breakpoint();
 
-        ptrace::cont(Pid::from_raw(self.program_pid), None).expect("failed to continue program");
-
-        let status = waitpid(Pid::from_raw(self.program_pid), None).expect("failed to wait pid");
-        if let wait::WaitStatus::Exited(_, status) = status {
-            println!("Process exited with status: {}.", status);
-            exit(0);
-        }
+        ptrace::cont(pid, None).expect("failed to continue program");
+        self.wait_trap()
     }
 
     fn set_breakpoint(&mut self, addr: u64) {
@@ -105,7 +111,7 @@ impl Debugger {
         self.breakpoints.insert(addr, breakpoint);
     }
 
-    fn get_register_value(&self, reg: RegSelector) -> u64 {
+    fn get_register_value(&self, reg: &RegSelector) -> u64 {
         let regs = ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
 
         match reg {
@@ -139,7 +145,7 @@ impl Debugger {
         }
     }
 
-    fn set_register_value(&self, reg: RegSelector, value: u64) {
+    fn set_register_value(&self, reg: &RegSelector, value: u64) {
         let mut regs =
             ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
 
@@ -177,8 +183,7 @@ impl Debugger {
     }
 
     fn dump_registers(&self) {
-        let mut regs =
-            ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
+        let regs = ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
 
         let regs = [
             regs.r15,
@@ -237,28 +242,57 @@ impl Debugger {
     }
 
     fn step_over_breakpoint(&mut self) {
-        let prev_instruction_addr = self.get_register_value(RegSelector::Reg(Reg::RIP)) - 1;
+        let rip = self.get_register_value(&RegSelector::Reg(Reg::RIP));
 
-        if let None = self.breakpoints.get(&prev_instruction_addr) {
-            return;
+        match self.breakpoints.get_mut(&rip) {
+            Some(bp) if bp.enabled() => {
+                bp.switch(false);
+            }
+            _ => return,
         }
 
-        if !self
-            .breakpoints
-            .get(&prev_instruction_addr)
-            .unwrap()
-            .enabled()
-        {
-            return;
-        }
-
-        self.set_register_value(RegSelector::Reg(Reg::RIP), prev_instruction_addr);
-
-        let bp = self.breakpoints.get_mut(&prev_instruction_addr).unwrap();
-        bp.switch(false);
         let pid = Pid::from_raw(self.program_pid);
         ptrace::step(pid, None).expect("failed to single step program");
-        waitpid(pid, None).expect("failed to wait pid");
+        self.wait_trap();
+
+        let bp = self.breakpoints.get_mut(&rip).unwrap();
         bp.switch(true);
+    }
+
+    fn wait_trap(&self) {
+        let status = waitpid(Pid::from_raw(self.program_pid), None).expect("failed to wait pid");
+        match status {
+            wait::WaitStatus::Stopped(_, Signal::SIGTRAP) => {
+                const SI_KERNEL: i32 = 0x80;
+                const TRAP_BRKPT: i32 = 0x1;
+                const TRAP_TRACE: i32 = 0x2;
+
+                let siginfo = ptrace::getsiginfo(Pid::from_raw(self.program_pid))
+                    .expect("failed to get siginfo");
+
+                match siginfo.si_code {
+                    // hit breakpoint
+                    SI_KERNEL | TRAP_BRKPT => {
+                        let reg = RegSelector::Reg(Reg::RIP);
+                        let rip = self.get_register_value(&reg);
+                        self.set_register_value(&reg, rip - 1);
+                    }
+
+                    // signle step
+                    TRAP_TRACE => (),
+
+                    _ => println!("Uknown SIGTRAP code: {}", siginfo.si_code),
+                }
+            }
+            wait::WaitStatus::Signaled(_, Signal::SIGSEGV, _) => {
+                println!("Segfault occured.");
+                exit(255);
+            }
+            wait::WaitStatus::Exited(_, status) => {
+                println!("Process exited with status: {}.", status);
+                exit(0);
+            }
+            _ => println!("Got signal: {:?}", status),
+        }
     }
 }
