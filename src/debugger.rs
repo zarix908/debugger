@@ -60,8 +60,13 @@ impl<'a> Debugger<'a> {
         match command {
             "continue" => self.continue_execution(),
             "break" => {
-                let addr = u64::from_str_radix(args[1], 16).expect("failed to parse address");
-                self.set_breakpoint(addr);
+                let line = args[2]
+                    .parse::<u64>()
+                    .expect("failed to parse source line number");
+                self.set_breakpoint(BreakpointRef::Line {
+                    filename: args[1].to_owned(),
+                    line,
+                });
             }
             "register" => {
                 match args[1] {
@@ -105,10 +110,23 @@ impl<'a> Debugger<'a> {
         self.wait_trap()
     }
 
-    fn set_breakpoint(&mut self, addr: u64) {
-        let mut breakpoint = Breakpoint::new(self.program_pid, addr);
-        breakpoint.switch(true);
-        self.breakpoints.insert(addr, breakpoint);
+    fn set_breakpoint(&mut self, reference: BreakpointRef) {
+        let addr = match reference {
+            BreakpointRef::Addr(addr) => Some(addr),
+            BreakpointRef::Line { filename, line } => self
+                .get_source_line_addr(filename, line)
+                .map(|addr| addr + self.load_addr),
+        };
+
+        if let Some(addr) = addr {
+            let breakpoint = self
+                .breakpoints
+                .entry(addr)
+                .or_insert(Breakpoint::new(self.program_pid, addr));
+            breakpoint.switch(true);
+        } else {
+            println!("addr of source line not found");
+        }
     }
 
     fn get_register_value(&self, reg: &RegSelector) -> u64 {
@@ -295,4 +313,71 @@ impl<'a> Debugger<'a> {
             _ => println!("Got signal: {:?}", status),
         }
     }
+
+    fn get_source_line_addr(&self, filename: String, line: u64) -> Option<u64> {
+        let mut units = self.dwarf.units();
+
+        let line_program = loop {
+            if let Some(header) = units.next().expect("failed to iter over dwarf units") {
+                let unit = self
+                    .dwarf
+                    .unit(header)
+                    .expect("failed to construct dwarf unit");
+
+                match self.get_unit_name(&unit) {
+                    Some(name) if name == filename => break unit.line_program,
+                    _ => (),
+                }
+            } else {
+                break None;
+            }
+        };
+
+        if let Some(line_program) = line_program {
+            let mut rows = line_program.rows();
+
+            while let Some((_, row)) = rows.next_row().expect("failed to get next source row") {
+                if row.is_stmt() && row.line().filter(|l| l.get() == line).is_some() {
+                    return Some(row.address());
+                }
+            }
+
+            None
+        } else {
+            None
+        }
+    }
+
+    fn get_unit_name(
+        &self,
+        unit: &gimli::Unit<gimli::EndianSlice<gimli::RunTimeEndian>, usize>,
+    ) -> Option<&str> {
+        let mut tree = unit
+            .entries_tree(None)
+            .expect("failed to get dwarf entries tree");
+        let root = tree
+            .root()
+            .expect("failed to get root of dwarf entries tree");
+        let offset = root
+            .entry()
+            .attr_value(gimli::DW_AT_name)
+            .expect("failed to get offset of unit name");
+
+        match offset {
+            Some(gimli::AttributeValue::DebugLineStrRef(offset)) => Some(
+                self.dwarf
+                    .debug_line_str
+                    .get_str(offset)
+                    .expect("failed to get unit name")
+                    .to_string()
+                    .expect("failed to parse unit name"),
+            ),
+            _ => None,
+        }
+    }
+}
+
+enum BreakpointRef {
+    Addr(u64),
+    Line { filename: String, line: u64 },
 }
