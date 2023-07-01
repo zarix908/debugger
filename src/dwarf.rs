@@ -21,7 +21,11 @@ impl<'a> Dwarf<'a> {
                     .unit(header)
                     .expect("failed to construct dwarf unit");
 
-                if self.get_unit_name(&unit).filter(|name| name == &filename).is_some() {
+                if self
+                    .get_unit_name(&unit)
+                    .filter(|name| name == &filename)
+                    .is_some()
+                {
                     break unit.line_program;
                 }
             } else {
