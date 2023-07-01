@@ -21,17 +21,16 @@ impl<'a> Dwarf<'a> {
                     .unit(header)
                     .expect("failed to construct dwarf unit");
 
-                match self.get_unit_name(&unit) {
-                    Some(name) if name == filename => break unit.line_program,
-                    _ => (),
+                if self.get_unit_name(&unit).filter(|name| name == &filename).is_some() {
+                    break unit.line_program;
                 }
             } else {
                 break None;
             }
         };
 
-        if let Some(line_program) = line_program {
-            let mut rows = line_program.rows();
+        line_program.and_then(|program| {
+            let mut rows = program.rows();
 
             while let Some((_, row)) = rows.next_row().expect("failed to get next source row") {
                 if row.is_stmt() && row.line().filter(|l| l.get() == line).is_some() {
@@ -40,9 +39,7 @@ impl<'a> Dwarf<'a> {
             }
 
             None
-        } else {
-            None
-        }
+        })
     }
 
     fn get_unit_name(
