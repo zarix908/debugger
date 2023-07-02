@@ -2,7 +2,7 @@
 
 ## Description
 
-mDBG-RS is a simple debugger for learning purposes, written according to the @TartanLlama guide.
+mDBG-RS is a simple debugger for learning purposes, written according to the [@TartanLlama](https://github.com/TartanLlama) guide.
 
 ## Working logic
 
