@@ -41,11 +41,12 @@ impl<'a> Debugger<'a> {
     pub fn run(&mut self) -> Result<(), String> {
         println!("Starting debugging process {}.", self.program_pid);
 
-        waitpid(Pid::from_raw(self.program_pid), None).expect("failed to wait pid");
+        self.wait_trap()
+            .map_err(|e| format!("failed to wait trap: {}", e))?;
 
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
-            let line = line.expect("failed to read line");
+            let line = line.map_err(|e| format!("failed to read line: {}", e))?;
             self.handle_command(line)
                 .map_err(|e| format!("failed to handle command: {}", e))?;
         }
@@ -58,11 +59,13 @@ impl<'a> Debugger<'a> {
         let command = args[0];
 
         match command {
-            "continue" => self.continue_execution(),
+            "continue" => self
+                .continue_execution()
+                .map_err(|e| format!("failed to continue execution: {}", e))?,
             "break" => {
                 let line = args[2]
                     .parse::<u64>()
-                    .expect("failed to parse source line number");
+                    .map_err(|e| format!("failed to parse source line number: {}", e))?;
                 self.set_breakpoint(BreakpointRef::Line {
                     filename: args[1].to_owned(),
                     line,
@@ -71,29 +74,34 @@ impl<'a> Debugger<'a> {
             }
             "register" => {
                 match args[1] {
-                    "dump" => self.dump_registers(),
+                    "dump" => self
+                        .dump_registers()
+                        .map_err(|e| format!("failed to dump registers: {}", e))?,
                     "read" => println!(
                         "{}: {:#X}",
                         args[2],
                         self.get_register_value(&RegSelector::Name(args[2]))
+                            .map_err(|e| format!("failed to get register value: {}", e))?
                     ),
                     "write" => {
-                        let value =
-                            u64::from_str_radix(args[3], 16).expect("failed to parse value");
+                        let value = u64::from_str_radix(args[3], 16)
+                            .map_err(|e| format!("failed to parse hex value: {}", e))?;
                         self.set_register_value(&RegSelector::Name(args[2]), value)
+                            .map_err(|e| format!("failed to set value to register: {}", e))?
                     }
                     _ => panic!("wrong command"),
                 };
             }
             "memory" => {
-                let addr = u64::from_str_radix(args[2], 16).expect("failed to parse address");
+                let addr = u64::from_str_radix(args[2], 16)
+                    .map_err(|e| format!("failed to parse memory address: {}", e))?;
 
                 match args[1] {
-                    "read" => println!("{:#X}", self.read_memory(addr)),
+                    "read" => println!("{:#X}", self.read_memory(addr)?),
                     "write" => {
-                        let value =
-                            i64::from_str_radix(args[3], 16).expect("failed to parse value");
-                        self.write_memory(addr, value);
+                        let value = i64::from_str_radix(args[3], 16)
+                            .map_err(|e| format!("failed to parse hex value: {}", e))?;
+                        self.write_memory(addr, value)?;
                     }
                     _ => panic!("wrong command"),
                 }
@@ -104,13 +112,15 @@ impl<'a> Debugger<'a> {
         Ok(())
     }
 
-    fn continue_execution(&mut self) {
+    fn continue_execution(&mut self) -> Result<(), String> {
         let pid = Pid::from_raw(self.program_pid);
 
-        self.step_over_breakpoint();
+        self.step_over_breakpoint()
+            .map_err(|e| format!("failed to step over breakpoint: {}", e))?;
 
-        ptrace::cont(pid, None).expect("failed to continue program");
+        ptrace::cont(pid, None).map_err(|e| format!("failed to continue program: {}", e))?;
         self.wait_trap()
+            .map_err(|e| format!("failed to wait trap: {}", e))
     }
 
     fn set_breakpoint(&mut self, reference: BreakpointRef) -> Result<(), String> {
@@ -136,10 +146,11 @@ impl<'a> Debugger<'a> {
         Ok(())
     }
 
-    fn get_register_value(&self, reg: &RegSelector) -> u64 {
-        let regs = ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
+    fn get_register_value(&self, reg: &RegSelector) -> Result<u64, String> {
+        let regs = ptrace::getregs(Pid::from_raw(self.program_pid))
+            .map_err(|e| format!("failed to get regs: {}", e))?;
 
-        match reg {
+        Ok(match reg {
             RegSelector::Reg(Reg::R15) | RegSelector::Name("r15") => regs.r15,
             RegSelector::Reg(Reg::R14) | RegSelector::Name("r14") => regs.r14,
             RegSelector::Reg(Reg::R13) | RegSelector::Name("r13") => regs.r13,
@@ -166,13 +177,13 @@ impl<'a> Debugger<'a> {
             RegSelector::Reg(Reg::ES) | RegSelector::Name("es") => regs.es,
             RegSelector::Reg(Reg::FS) | RegSelector::Name("fs") => regs.fs,
             RegSelector::Reg(Reg::GS) | RegSelector::Name("gs") => regs.gs,
-            _ => panic!("register not found"),
-        }
+            _ => Err("register not found")?,
+        })
     }
 
-    fn set_register_value(&self, reg: &RegSelector, value: u64) {
-        let mut regs =
-            ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
+    fn set_register_value(&self, reg: &RegSelector, value: u64) -> Result<(), String> {
+        let mut regs = ptrace::getregs(Pid::from_raw(self.program_pid))
+            .map_err(|e| format!("failed to get regs: {}", e))?;
 
         match reg {
             RegSelector::Reg(Reg::R15) | RegSelector::Name("r15") => regs.r15 = value,
@@ -201,14 +212,17 @@ impl<'a> Debugger<'a> {
             RegSelector::Reg(Reg::ES) | RegSelector::Name("es") => regs.es = value,
             RegSelector::Reg(Reg::FS) | RegSelector::Name("fs") => regs.fs = value,
             RegSelector::Reg(Reg::GS) | RegSelector::Name("gs") => regs.gs = value,
-            _ => panic!("register not found"),
+            _ => Err("register not found")?,
         };
 
-        ptrace::setregs(Pid::from_raw(self.program_pid), regs).expect("failed to set regs");
+        ptrace::setregs(Pid::from_raw(self.program_pid), regs)
+            .map_err(|e| format!("failed to set regs: {}", e))?;
+        Ok(())
     }
 
-    fn dump_registers(&self) {
-        let regs = ptrace::getregs(Pid::from_raw(self.program_pid)).expect("failed to get regs");
+    fn dump_registers(&self) -> Result<(), String> {
+        let regs = ptrace::getregs(Pid::from_raw(self.program_pid))
+            .map_err(|e| format!("failed to get regs: {}", e))?;
 
         let regs = [
             regs.r15,
@@ -248,63 +262,78 @@ impl<'a> Debugger<'a> {
         for i in 0..26 {
             println!("{}: {:#X}", names[i], regs[i]);
         }
+
+        Ok(())
     }
 
-    fn read_memory(&self, addr: u64) -> i64 {
+    fn read_memory(&self, addr: u64) -> Result<i64, String> {
         ptrace::read(Pid::from_raw(self.program_pid), addr as *mut c_void)
-            .expect("failed to peek instruction")
+            .map_err(|e| format!("failed to read memory: {}", e))
     }
 
-    fn write_memory(&self, addr: u64, value: i64) {
+    fn write_memory(&self, addr: u64, value: i64) -> Result<(), String> {
         unsafe {
             ptrace::write(
                 Pid::from_raw(self.program_pid),
                 addr as *mut c_void,
                 value as *mut c_void,
             )
-            .expect("failed to peek instruction");
-        };
+            .map_err(|e| format!("failed to write memory: {}", e))
+        }
     }
 
-    fn step_over_breakpoint(&mut self) {
-        let rip = self.get_register_value(&RegSelector::Reg(Reg::RIP));
+    fn step_over_breakpoint(&mut self) -> Result<(), String> {
+        let rip = self
+            .get_register_value(&RegSelector::Reg(Reg::RIP))
+            .map_err(|e| format!("failed to get RIP register value: {}", e))?;
 
         match self.breakpoints.get_mut(&rip) {
             Some(bp) if bp.enabled() => {
                 bp.switch(false);
             }
-            _ => return,
+            _ => return Ok(()),
         }
 
         let pid = Pid::from_raw(self.program_pid);
-        ptrace::step(pid, None).expect("failed to single step program");
-        self.wait_trap();
+        ptrace::step(pid, None).map_err(|e| format!("failed to single step program: {}", e))?;
+        self.wait_trap()
+            .map_err(|e| format!("failed to wait trap: {}", e))?;
 
+        // redeclare bp due to reborrow self as mutable
+        // unwrap because already check that breakpoint exists
         let bp = self.breakpoints.get_mut(&rip).unwrap();
         bp.switch(true);
+
+        Ok(())
     }
 
-    fn wait_trap(&self) {
-        let status = waitpid(Pid::from_raw(self.program_pid), None).expect("failed to wait pid");
+    fn wait_trap(&self) -> Result<(), String> {
+        let status = waitpid(Pid::from_raw(self.program_pid), None)
+            .map_err(|e| format!("failed to wait pid: {}", e))?;
+
         match status {
             wait::WaitStatus::Stopped(_, Signal::SIGTRAP) => {
-                const SI_KERNEL: i32 = 0x80;
+                const SI_USER: i32 = 0x0;
                 const TRAP_BRKPT: i32 = 0x1;
                 const TRAP_TRACE: i32 = 0x2;
+                const SI_KERNEL: i32 = 0x80;
 
                 let siginfo = ptrace::getsiginfo(Pid::from_raw(self.program_pid))
-                    .expect("failed to get siginfo");
+                    .map_err(|e| format!("failed to get siginfo: {}", e))?;
 
                 match siginfo.si_code {
                     // hit breakpoint
                     SI_KERNEL | TRAP_BRKPT => {
                         let reg = RegSelector::Reg(Reg::RIP);
-                        let rip = self.get_register_value(&reg);
-                        self.set_register_value(&reg, rip - 1);
+                        let rip = self
+                            .get_register_value(&reg)
+                            .map_err(|e| format!("failed to get RIP register value: {}", e))?;
+                        self.set_register_value(&reg, rip - 1)
+                            .map_err(|e| format!("failed to set value to RIP register: {}", e))?;
                     }
 
-                    // signle step
-                    TRAP_TRACE => (),
+                    // traceme or signle step
+                    SI_USER | TRAP_TRACE => (),
 
                     _ => println!("Uknown SIGTRAP code: {}", siginfo.si_code),
                 }
@@ -319,6 +348,8 @@ impl<'a> Debugger<'a> {
             }
             _ => println!("Got signal: {:?}", status),
         }
+
+        Ok(())
     }
 }
 
