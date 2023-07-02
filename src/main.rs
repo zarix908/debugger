@@ -31,7 +31,8 @@ fn run() -> Result<(), String> {
             let (dwarf, endian) = load_dwarf(mmap.deref().borrow())?;
             let dwarf = Dwarf::new(borrow_section(&dwarf, endian));
 
-            let load_addr = linux_maps::get_load_addr(child.as_raw(), &program_path);
+            let load_addr = linux_maps::get_load_addr(child.as_raw(), &program_path)
+                .map_err(|e| format!("failed to get load addr: {}", e))?;
 
             let mut debugger = Debugger::new(child.as_raw(), dwarf, load_addr);
             debugger.run()?;

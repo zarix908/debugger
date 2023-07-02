@@ -19,10 +19,10 @@ impl Breakpoint {
         }
     }
 
-    pub fn switch(&mut self, enable: bool) {
+    pub fn switch(&mut self, enable: bool) -> Result<(), String> {
         let pid = Pid::from_raw(self.program_pid);
-        let instruction =
-            ptrace::read(pid, self.addr as *mut c_void).expect("failed to peek instruction");
+        let instruction = ptrace::read(pid, self.addr as *mut c_void)
+            .map_err(|e| format!("failed to peek instruction: {}", e))?;
 
         let replaced_instruction = if enable {
             self.replaced_instruction_opcode = Some((instruction & 0xFF) as u8);
@@ -30,9 +30,10 @@ impl Breakpoint {
             (instruction & !0xFF) | INT3_OPCODE
         } else {
             (instruction & !0xFF)
-                | self.replaced_instruction_opcode.expect(
-                    "failed to disable breakpoint: opcode of replaced instruction isn't saved",
-                ) as i64
+                | self
+                    .replaced_instruction_opcode
+                    .ok_or_else(|| "opcode of replaced instruction isn't saved")?
+                    as i64
         };
 
         unsafe {
@@ -41,10 +42,11 @@ impl Breakpoint {
                 self.addr as *mut c_void,
                 replaced_instruction as *mut c_void,
             )
-            .expect("failed to poke breakpoint instruction");
-        };
-
+            .map_err(|e| format!("failed to poke breakpoint instruction: {}", e))?;
+        }
         self.enabled = enable;
+
+        Ok(())
     }
 
     pub fn enabled(&self) -> bool {

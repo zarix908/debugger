@@ -138,7 +138,9 @@ impl<'a> Debugger<'a> {
                 .breakpoints
                 .entry(addr)
                 .or_insert(Breakpoint::new(self.program_pid, addr));
-            breakpoint.switch(true);
+            breakpoint
+                .switch(true)
+                .map_err(|e| format!("failed to enable breakpoint: {}", e))?;
         } else {
             println!("addr of source line not found");
         }
@@ -289,7 +291,8 @@ impl<'a> Debugger<'a> {
 
         match self.breakpoints.get_mut(&rip) {
             Some(bp) if bp.enabled() => {
-                bp.switch(false);
+                bp.switch(false)
+                    .map_err(|e| format!("failed to disable breakpoint: {}", e))?;
             }
             _ => return Ok(()),
         }
@@ -302,7 +305,8 @@ impl<'a> Debugger<'a> {
         // redeclare bp due to reborrow self as mutable
         // unwrap because already check that breakpoint exists
         let bp = self.breakpoints.get_mut(&rip).unwrap();
-        bp.switch(true);
+        bp.switch(true)
+            .map_err(|e| format!("failed to enable breakpoint: {}", e))?;
 
         Ok(())
     }
