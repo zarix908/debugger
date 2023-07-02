@@ -1,5 +1,7 @@
 # mDBG-RS
 
+![](./images/logo.png)
+
 ## Description
 
 mDBG-RS is a simple debugger for learning purposes, written according to the [@TartanLlama](https://github.com/TartanLlama) guide.
