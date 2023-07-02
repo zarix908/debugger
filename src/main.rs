@@ -15,19 +15,26 @@ use std::{borrow::Borrow, env::args, ffi::CString, fs, ops::Deref, ptr};
 use crate::dwarf::{borrow_section, load_dwarf, Dwarf};
 
 fn main() {
-    let program_path = args().nth(1).expect("filepath isn't provided");
+    run().unwrap();
+}
+
+fn run() -> Result<(), String> {
+    let program_path = args().nth(1).ok_or_else(|| "filepath isn't provided")?;
 
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child }) => {
-            let file = fs::File::open(&program_path).unwrap();
-            let mmap = unsafe { memmap::Mmap::map(&file).unwrap() };
-            let (dwarf, endian) = load_dwarf(mmap.deref().borrow());
+            let file = fs::File::open(&program_path)
+                .map_err(|e| format!("failed to open file {}: {}", program_path, e))?;
+            let mmap = unsafe {
+                memmap::Mmap::map(&file).map_err(|e| format!("failed to mmap file: {}", e))?
+            };
+            let (dwarf, endian) = load_dwarf(mmap.deref().borrow())?;
             let dwarf = Dwarf::new(borrow_section(&dwarf, endian));
 
             let load_addr = linux_maps::get_load_addr(child.as_raw(), &program_path);
 
             let mut debugger = Debugger::new(child.as_raw(), dwarf, load_addr);
-            debugger.run();
+            debugger.run()?;
         }
         Ok(ForkResult::Child) => {
             ptrace::traceme().expect("failed to run traceme");
@@ -40,4 +47,6 @@ fn main() {
         }
         Err(_) => println!("Fork failed"),
     }
+
+    Ok(())
 }

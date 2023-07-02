@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub enum Reg {
     R15,
     R14,

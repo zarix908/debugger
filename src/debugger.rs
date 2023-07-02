@@ -38,7 +38,7 @@ impl<'a> Debugger<'a> {
         }
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Result<(), String> {
         println!("Starting debugging process {}.", self.program_pid);
 
         waitpid(Pid::from_raw(self.program_pid), None).expect("failed to wait pid");
@@ -46,11 +46,14 @@ impl<'a> Debugger<'a> {
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             let line = line.expect("failed to read line");
-            self.handle_command(line);
+            self.handle_command(line)
+                .map_err(|e| format!("failed to handle command: {}", e))?;
         }
+
+        Ok(())
     }
 
-    fn handle_command(&mut self, line: String) {
+    fn handle_command(&mut self, line: String) -> Result<(), String> {
         let args = line.split(" ").collect::<Vec<&str>>();
         let command = args[0];
 
@@ -63,7 +66,8 @@ impl<'a> Debugger<'a> {
                 self.set_breakpoint(BreakpointRef::Line {
                     filename: args[1].to_owned(),
                     line,
-                });
+                })
+                .map_err(|e| format!("failed to set breakpoint: {}", e))?;
             }
             "register" => {
                 match args[1] {
@@ -96,6 +100,8 @@ impl<'a> Debugger<'a> {
             }
             _ => panic!("wrong command"),
         };
+
+        Ok(())
     }
 
     fn continue_execution(&mut self) {
@@ -107,12 +113,13 @@ impl<'a> Debugger<'a> {
         self.wait_trap()
     }
 
-    fn set_breakpoint(&mut self, reference: BreakpointRef) {
+    fn set_breakpoint(&mut self, reference: BreakpointRef) -> Result<(), String> {
         let addr = match reference {
             BreakpointRef::Addr(addr) => Some(addr),
             BreakpointRef::Line { filename, line } => self
                 .dwarf
                 .get_source_line_addr(filename, line)
+                .map_err(|e| format!("failed to get addr of source line: {}", e))?
                 .map(|addr| addr + self.load_addr),
         };
 
@@ -125,6 +132,8 @@ impl<'a> Debugger<'a> {
         } else {
             println!("addr of source line not found");
         }
+
+        Ok(())
     }
 
     fn get_register_value(&self, reg: &RegSelector) -> u64 {
@@ -313,6 +322,7 @@ impl<'a> Debugger<'a> {
     }
 }
 
+#[allow(dead_code)]
 enum BreakpointRef {
     Addr(u64),
     Line { filename: String, line: u64 },
