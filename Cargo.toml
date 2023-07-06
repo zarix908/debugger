@@ -1,13 +1,6 @@
-[package]
-name = "debugger"
-version = "0.1.0"
-edition = "2021"
+[workspace]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-gimli = "0.27.2"
-memmap = "0.7.0"
-nix = "0.26.2"
-object = "0.31.1"
-regex = "1.8.4"
+members = [
+    "cli",
+    "mdbg_rs",
+]

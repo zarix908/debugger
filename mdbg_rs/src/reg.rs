@@ -31,10 +31,10 @@ pub enum Reg {
     GS,
 }
 
-struct RegDescriptor<'value, 'name> {
+struct RegDescriptor<'a> {
     reg: Reg,
-    name: &'name str,
-    value_ptr: &'value mut u64,
+    name: &'static str,
+    value_ptr: &'a mut u64,
 }
 
 pub enum RegSelector<'a> {

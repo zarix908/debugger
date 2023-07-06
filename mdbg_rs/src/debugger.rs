@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    io::{self, BufRead},
-    os::raw::c_void,
-    panic,
-    process::exit,
-};
+use std::{collections::HashMap, os::raw::c_void};
 
 use nix::{
     sys::{
@@ -38,92 +32,18 @@ impl<'a> Debugger<'a> {
         }
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
-        println!("Starting debugging process {}.", self.program_pid);
-
-        self.wait_trap()
-            .map_err(|e| format!("failed to wait trap: {}", e))?;
-
-        let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            let line = line.map_err(|e| format!("failed to read line: {}", e))?;
-            self.handle_command(line)
-                .map_err(|e| format!("failed to handle command: {}", e))?;
-        }
-
-        Ok(())
-    }
-
-    fn handle_command(&mut self, line: String) -> Result<(), String> {
-        let args = line.split(" ").collect::<Vec<&str>>();
-        let command = args[0];
-
-        match command {
-            "continue" => self
-                .continue_execution()
-                .map_err(|e| format!("failed to continue execution: {}", e))?,
-            "break" => {
-                let line = args[2]
-                    .parse::<u64>()
-                    .map_err(|e| format!("failed to parse source line number: {}", e))?;
-                self.set_breakpoint(BreakpointRef::Line {
-                    filename: args[1].to_owned(),
-                    line,
-                })
-                .map_err(|e| format!("failed to set breakpoint: {}", e))?;
-            }
-            "register" => {
-                match args[1] {
-                    "dump" => self
-                        .dump_registers()
-                        .map_err(|e| format!("failed to dump registers: {}", e))?,
-                    "read" => println!(
-                        "{}: {:#X}",
-                        args[2],
-                        self.get_register_value(&RegSelector::Name(args[2]))
-                            .map_err(|e| format!("failed to get register value: {}", e))?
-                    ),
-                    "write" => {
-                        let value = u64::from_str_radix(args[3], 16)
-                            .map_err(|e| format!("failed to parse hex value: {}", e))?;
-                        self.set_register_value(&RegSelector::Name(args[2]), value)
-                            .map_err(|e| format!("failed to set value to register: {}", e))?
-                    }
-                    _ => panic!("wrong command"),
-                };
-            }
-            "memory" => {
-                let addr = u64::from_str_radix(args[2], 16)
-                    .map_err(|e| format!("failed to parse memory address: {}", e))?;
-
-                match args[1] {
-                    "read" => println!("{:#X}", self.read_memory(addr)?),
-                    "write" => {
-                        let value = i64::from_str_radix(args[3], 16)
-                            .map_err(|e| format!("failed to parse hex value: {}", e))?;
-                        self.write_memory(addr, value)?;
-                    }
-                    _ => panic!("wrong command"),
-                }
-            }
-            _ => panic!("wrong command"),
-        };
-
-        Ok(())
-    }
-
-    fn continue_execution(&mut self) -> Result<(), String> {
+    pub fn continue_execution(&mut self) -> Result<Option<i32>, String> {
         let pid = Pid::from_raw(self.program_pid);
 
         self.step_over_breakpoint()
             .map_err(|e| format!("failed to step over breakpoint: {}", e))?;
 
         ptrace::cont(pid, None).map_err(|e| format!("failed to continue program: {}", e))?;
-        self.wait_trap()
+        self.wait_trap(false)
             .map_err(|e| format!("failed to wait trap: {}", e))
     }
 
-    fn set_breakpoint(&mut self, reference: BreakpointRef) -> Result<(), String> {
+    pub fn set_breakpoint(&mut self, reference: BreakpointRef) -> Result<(), String> {
         let addr = match reference {
             BreakpointRef::Addr(addr) => Some(addr),
             BreakpointRef::Line { filename, line } => self
@@ -142,20 +62,20 @@ impl<'a> Debugger<'a> {
                 .switch(true)
                 .map_err(|e| format!("failed to enable breakpoint: {}", e))?;
         } else {
-            println!("addr of source line not found");
+            Err("addr of source line not found")?;
         }
 
         Ok(())
     }
 
-    fn get_register_value(&self, reg: &RegSelector) -> Result<u64, String> {
+    pub fn get_register_value(&self, reg: &RegSelector) -> Result<u64, String> {
         let mut regs = ptrace::getregs(Pid::from_raw(self.program_pid))
             .map_err(|e| format!("failed to get regs: {}", e))?;
 
         Ok(reg::get_register_value(&mut regs, reg))
     }
 
-    fn set_register_value(&self, reg: &RegSelector, value: u64) -> Result<(), String> {
+    pub fn set_register_value(&self, reg: &RegSelector, value: u64) -> Result<(), String> {
         let mut regs = ptrace::getregs(Pid::from_raw(self.program_pid))
             .map_err(|e| format!("failed to get regs: {}", e))?;
 
@@ -166,23 +86,19 @@ impl<'a> Debugger<'a> {
         Ok(())
     }
 
-    fn dump_registers(&self) -> Result<(), String> {
+    pub fn dump_registers(&self) -> Result<HashMap<String, u64>, String> {
         let mut regs = ptrace::getregs(Pid::from_raw(self.program_pid))
             .map_err(|e| format!("failed to get regs: {}", e))?;
 
-        for (name, value) in reg::dump_registers(&mut regs) {
-            println!("{}: {:#X}", name, value);
-        }
-
-        Ok(())
+        Ok(reg::dump_registers(&mut regs))
     }
 
-    fn read_memory(&self, addr: u64) -> Result<i64, String> {
+    pub fn read_memory(&self, addr: u64) -> Result<i64, String> {
         ptrace::read(Pid::from_raw(self.program_pid), addr as *mut c_void)
             .map_err(|e| format!("failed to read memory: {}", e))
     }
 
-    fn write_memory(&self, addr: u64, value: i64) -> Result<(), String> {
+    pub fn write_memory(&self, addr: u64, value: i64) -> Result<(), String> {
         unsafe {
             ptrace::write(
                 Pid::from_raw(self.program_pid),
@@ -208,7 +124,7 @@ impl<'a> Debugger<'a> {
 
         let pid = Pid::from_raw(self.program_pid);
         ptrace::step(pid, None).map_err(|e| format!("failed to single step program: {}", e))?;
-        self.wait_trap()
+        self.wait_trap(false)
             .map_err(|e| format!("failed to wait trap: {}", e))?;
 
         // redeclare bp due to reborrow self as mutable
@@ -220,7 +136,11 @@ impl<'a> Debugger<'a> {
         Ok(())
     }
 
-    fn wait_trap(&self) -> Result<(), String> {
+    pub fn wait_attach(&self) -> Result<(), String> {
+        self.wait_trap(true).map(|_| ())
+    }
+
+    fn wait_trap(&self, si_code_must_user: bool) -> Result<Option<i32>, String> {
         let status = waitpid(Pid::from_raw(self.program_pid), None)
             .map_err(|e| format!("failed to wait pid: {}", e))?;
 
@@ -233,6 +153,10 @@ impl<'a> Debugger<'a> {
 
                 let siginfo = ptrace::getsiginfo(Pid::from_raw(self.program_pid))
                     .map_err(|e| format!("failed to get siginfo: {}", e))?;
+
+                if si_code_must_user && siginfo.si_code != SI_USER {
+                    Err("could not attach to debugee process: wrong ci code")?;
+                }
 
                 match siginfo.si_code {
                     // hit breakpoint
@@ -248,26 +172,23 @@ impl<'a> Debugger<'a> {
                     // traceme or signle step
                     SI_USER | TRAP_TRACE => (),
 
-                    _ => println!("Uknown SIGTRAP code: {}", siginfo.si_code),
+                    _ => Err(format!("Uknown SIGTRAP code: {}", siginfo.si_code))?,
                 }
             }
             wait::WaitStatus::Signaled(_, Signal::SIGSEGV, _) => {
-                println!("Segfault occured.");
-                exit(255);
+                Err("Segfault occured.")?;
             }
             wait::WaitStatus::Exited(_, status) => {
-                println!("Process exited with status: {}.", status);
-                exit(0);
+                return Ok(Some(status));
             }
-            _ => println!("Got signal: {:?}", status),
+            _ => Err(format!("Uknown signal: {:?}", status))?,
         }
 
-        Ok(())
+        Ok(None)
     }
 }
 
-#[allow(dead_code)]
-enum BreakpointRef {
+pub enum BreakpointRef {
     Addr(u64),
     Line { filename: String, line: u64 },
 }
