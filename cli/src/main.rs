@@ -1,3 +1,5 @@
+mod helper;
+
 use std::{
     env::{args, var},
     ffi::CString,
@@ -11,6 +13,7 @@ use nix::{
     sys::{personality, ptrace},
     unistd::{fork, ForkResult},
 };
+use rustyline::history::DefaultHistory;
 
 fn main() {
     run().unwrap();
@@ -29,8 +32,23 @@ fn run() -> Result<(), String> {
                 .wait_attach()
                 .map_err(|e| format!("failed to wait trap: {}", e))?;
 
-            let mut editor = rustyline::DefaultEditor::new()
+            let mut editor = rustyline::Editor::<helper::CliHelper, DefaultHistory>::new()
                 .map_err(|e| format!("failed to create editor: {}", e))?;
+
+            editor.set_helper(Some(helper::CliHelper::new(
+                vec![
+                    "continue",
+                    "break",
+                    "register dump",
+                    "register read",
+                    "register write",
+                    "memory read",
+                    "memory write",
+                ]
+                .into_iter()
+                .map(|c| c.to_owned())
+                .collect(),
+            )));
 
             let history_path = var("HOME").ok().map(|home| {
                 Path::new(&home)
@@ -70,7 +88,7 @@ fn run() -> Result<(), String> {
 }
 
 fn run_command_loop(
-    editor: &mut rustyline::DefaultEditor,
+    editor: &mut rustyline::Editor<helper::CliHelper, DefaultHistory>,
     debugger: &mut mdbg_rs::Debugger,
 ) -> Result<(), String> {
     loop {
