@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 nix = "0.26.2"
 mdbg_rs = { path = "../mdbg_rs" }
+rustyline = "12.0.0"

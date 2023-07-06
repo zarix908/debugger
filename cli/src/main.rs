@@ -1,11 +1,11 @@
 use std::{
-    env::args,
+    env::{args, var},
     ffi::CString,
-    io::{self, BufRead},
+    fs::create_dir_all,
+    path::Path,
     ptr,
 };
 
-use mdbg_rs::RegSelector;
 use nix::{
     libc::execl,
     sys::{personality, ptrace},
@@ -29,15 +29,27 @@ fn run() -> Result<(), String> {
                 .wait_attach()
                 .map_err(|e| format!("failed to wait trap: {}", e))?;
 
-            let stdin = io::stdin();
-            for line in stdin.lock().lines() {
-                let line = line.map_err(|e| format!("failed to read line: {}", e))?;
-                if let Some(status) = handle_command(&mut debugger, line)
-                    .map_err(|e| format!("failed to handle command: {}", e))?
-                {
-                    println!("Process exited with status: {}", status);
-                    break;
-                };
+            let mut editor = rustyline::DefaultEditor::new()
+                .map_err(|e| format!("failed to create editor: {}", e))?;
+
+            let history_path = var("HOME").ok().map(|home| {
+                Path::new(&home)
+                    .join(".cache")
+                    .join("mdbg_rs")
+                    .join("history")
+            });
+            if let Some(history_path) = history_path {
+                let _ = editor.load_history(&history_path);
+                run_command_loop(&mut editor, &mut debugger)?;
+                let parent = history_path.parent().unwrap();
+                create_dir_all(&parent).map_err(|e| {
+                    format!("failed to create directory to save command history: {}", e)
+                })?;
+                editor
+                    .save_history(&history_path)
+                    .map_err(|e| format!("failed to save history: {}", e))?;
+            } else {
+                run_command_loop(&mut editor, &mut debugger)?;
             }
 
             return Ok(());
@@ -51,7 +63,39 @@ fn run() -> Result<(), String> {
                 execl(c_path.as_ptr(), c_path.as_ptr(), ptr::null_mut::<i8>());
             }
         }
-        Err(_) => println!("Fork failed"),
+        Err(e) => Err(format!("failed to fork process: {}", e))?,
+    }
+
+    Ok(())
+}
+
+fn run_command_loop(
+    editor: &mut rustyline::DefaultEditor,
+    debugger: &mut mdbg_rs::Debugger,
+) -> Result<(), String> {
+    loop {
+        let readline = editor.readline("mdbg> ");
+        match readline {
+            Ok(line) => {
+                editor
+                    .add_history_entry(line.as_str())
+                    .map_err(|e| format!("failed to add history entry: {}", e))?;
+
+                if let Some(status) = handle_command(debugger, line)? {
+                    println!("Process exited with status: {}", status);
+                    break;
+                }
+            }
+            Err(rustyline::error::ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
+            }
+            Err(rustyline::error::ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break;
+            }
+            Err(e) => Err(format!("failed to read line: {}", e))?,
+        }
     }
 
     Ok(())
@@ -93,14 +137,14 @@ fn handle_command(debugger: &mut mdbg_rs::Debugger, line: String) -> Result<Opti
                     "{}: {:#X}",
                     args[2],
                     debugger
-                        .get_register_value(&RegSelector::Name(args[2]))
+                        .get_register_value(&mdbg_rs::RegSelector::Name(args[2]))
                         .map_err(|e| format!("failed to get register value: {}", e))?
                 ),
                 "write" => {
                     let value = u64::from_str_radix(args[3], 16)
                         .map_err(|e| format!("failed to parse hex value: {}", e))?;
                     debugger
-                        .set_register_value(&RegSelector::Name(args[2]), value)
+                        .set_register_value(&mdbg_rs::RegSelector::Name(args[2]), value)
                         .map_err(|e| format!("failed to set value to register: {}", e))?
                 }
                 _ => panic!("wrong command"),
