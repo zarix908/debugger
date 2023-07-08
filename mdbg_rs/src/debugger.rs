@@ -18,18 +18,22 @@ use crate::{
 pub struct Debugger<'a> {
     program_pid: i32,
     dwarf: Dwarf<'a>,
-    load_addr: u64,
+    load_addr: Option<u64>,
     breakpoints: HashMap<u64, Breakpoint>,
 }
 
 impl<'a> Debugger<'a> {
-    pub fn new(program_pid: i32, dwarf: Dwarf<'a>, load_addr: u64) -> Debugger<'a> {
+    pub fn new(program_pid: i32, dwarf: Dwarf<'a>) -> Debugger<'a> {
         Debugger {
             program_pid,
             dwarf,
-            load_addr,
+            load_addr: None,
             breakpoints: HashMap::new(),
         }
+    }
+
+    pub fn set_load_addr(&mut self, addr: u64) {
+        self.load_addr = Some(addr);
     }
 
     pub fn continue_execution(&mut self) -> Result<Option<i32>, String> {
@@ -44,13 +48,14 @@ impl<'a> Debugger<'a> {
     }
 
     pub fn set_breakpoint(&mut self, reference: BreakpointRef) -> Result<(), String> {
+        let load_addr = self.load_addr.ok_or("load addr not set")?;
         let addr = match reference {
             BreakpointRef::Addr(addr) => Some(addr),
             BreakpointRef::Line { filename, line } => self
                 .dwarf
                 .get_source_line_addr(filename, line)
                 .map_err(|e| format!("failed to get addr of source line: {}", e))?
-                .map(|addr| addr + self.load_addr),
+                .map(|addr| addr + load_addr),
         };
 
         if let Some(addr) = addr {

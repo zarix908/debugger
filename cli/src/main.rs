@@ -26,11 +26,13 @@ fn run() -> Result<(), String> {
         Ok(ForkResult::Parent { child }) => {
             let mut debugger = mdbg_rs::load_in_memory(child.as_raw(), &program_path)?;
 
-            println!("Starting debugging process {}.", child.as_raw());
-
             debugger
                 .wait_attach()
                 .map_err(|e| format!("failed to wait trap: {}", e))?;
+            println!("Starting debugging process {}.", child.as_raw());
+            let load_addr = mdbg_rs::linux_maps::get_load_addr(child.as_raw(), &program_path)
+                .map_err(|e| format!("failed to get load addr: {}", e))?;
+            debugger.set_load_addr(load_addr);
 
             let mut editor = rustyline::Editor::<helper::CliHelper, DefaultHistory>::new()
                 .map_err(|e| format!("failed to create editor: {}", e))?;
