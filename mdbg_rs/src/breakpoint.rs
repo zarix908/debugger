@@ -36,6 +36,7 @@ impl Breakpoint {
                     as i64
         };
 
+        // SAFETY: addr pointer come outside the program. replaced_instruction isn't pointer, it's a data.
         unsafe {
             ptrace::write(
                 pid,

@@ -22,6 +22,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let program_path = args().nth(1).ok_or_else(|| "filepath isn't provided")?;
 
+    // SAFETY: Call in single thread.
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child }) => {
             let mut debugger = mdbg_rs::load_in_memory(child.as_raw(), &program_path)?;
@@ -76,11 +77,14 @@ fn run() -> Result<(), String> {
         }
         Ok(ForkResult::Child) => {
             ptrace::traceme().expect("failed to run traceme");
-            let c_path = CString::new(program_path).unwrap();
+            let c_path = CString::new(program_path.clone()).unwrap();
+            let c_path_arg = CString::new(program_path).unwrap();
             personality::set(personality::Persona::ADDR_NO_RANDOMIZE)
                 .expect("failed to disable ASLR");
+
+            // SAFETY: there isn't aliased pointers.
             unsafe {
-                execl(c_path.as_ptr(), c_path.as_ptr(), ptr::null_mut::<i8>());
+                execl(c_path.as_ptr(), c_path_arg.as_ptr(), ptr::null::<i8>());
             }
         }
         Err(e) => Err(format!("failed to fork process: {}", e))?,

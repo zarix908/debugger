@@ -3,4 +3,5 @@
 members = [
     "cli",
     "mdbg_rs",
+    "clib"
 ]

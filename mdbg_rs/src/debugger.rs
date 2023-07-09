@@ -104,6 +104,7 @@ impl<'a> Debugger<'a> {
     }
 
     pub fn write_memory(&self, addr: u64, value: i64) -> Result<(), String> {
+        // SAFETY: addr pointer come outside the program. value isn't pointer, it's a data.
         unsafe {
             ptrace::write(
                 Pid::from_raw(self.program_pid),
@@ -196,4 +197,16 @@ impl<'a> Debugger<'a> {
 pub enum BreakpointRef {
     Addr(u64),
     Line { filename: String, line: u64 },
+}
+
+impl BreakpointRef {
+    pub fn clone(&self) -> BreakpointRef {
+        match self {
+            BreakpointRef::Addr(addr) => BreakpointRef::Addr(*addr),
+            BreakpointRef::Line { filename, line } => BreakpointRef::Line {
+                filename: filename.clone(),
+                line: *line,
+            },
+        }
+    }
 }
