@@ -172,18 +172,10 @@ pub struct RegistersDump {
 }
 
 #[no_mangle]
-pub extern "C" fn dump_registers(
-    ctx: *const libc::c_void,
-    dump: *mut RegistersDump,
-    dump_regs_count: libc::size_t,
-) -> i64 {
+pub extern "C" fn dump_registers(ctx: *const libc::c_void, dump: *mut RegistersDump) -> i64 {
     Context::from(ctx as u64)
         .and_then(|mut ctx| ctx.with_debugger(|d| d.dump_registers().or(Err(()))))
         .map(|regs| {
-            if dump_regs_count != regs.len() {
-                return -1;
-            }
-
             unsafe {
                 // SAFETY: The caller must guarantee that pointer is valid.
                 *dump = RegistersDump {
