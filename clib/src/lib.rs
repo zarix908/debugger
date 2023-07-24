@@ -184,10 +184,9 @@ pub extern "C" fn dump_registers(
                 return -1;
             }
 
-            let index = 0;
-            let new_index = dump.wrapping_add(index);
             unsafe {
-                *new_index = RegistersDump {
+                // SAFETY: The caller must guarantee that pointer is valid.
+                *dump = RegistersDump {
                     r15: *regs.get("r15").unwrap_or(&0u64),
                     r14: *regs.get("r14").unwrap_or(&0u64),
                     r13: *regs.get("r13").unwrap_or(&0u64),
