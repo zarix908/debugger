@@ -141,6 +141,87 @@ pub extern "C" fn set_register_value(
         .unwrap_or(-1)
 }
 
+#[repr(C)]
+pub struct RegistersDump {
+    r15: u64,
+    r14: u64,
+    r13: u64,
+    r12: u64,
+    rbp: u64,
+    rbx: u64,
+    r11: u64,
+    r10: u64,
+    r9: u64,
+    r8: u64,
+    rax: u64,
+    rcx: u64,
+    rdx: u64,
+    rsi: u64,
+    rdi: u64,
+    rip: u64,
+    cs: u64,
+    eflags: u64,
+    rsp: u64,
+    ss: u64,
+    fs_base: u64,
+    gs_base: u64,
+    ds: u64,
+    es: u64,
+    fs: u64,
+    gs: u64,
+}
+
+#[no_mangle]
+pub extern "C" fn dump_registers(
+    ctx: *const libc::c_void,
+    dump: *mut RegistersDump,
+    dump_regs_count: libc::size_t,
+) -> i64 {
+    Context::from(ctx as u64)
+        .and_then(|mut ctx| ctx.with_debugger(|d| d.dump_registers().or(Err(()))))
+        .map(|regs| {
+            if dump_regs_count != regs.len() {
+                return -1;
+            }
+
+            let index = 0;
+            let new_index = dump.wrapping_add(index);
+            unsafe {
+                *new_index = RegistersDump {
+                    r15: *regs.get("r15").unwrap_or(&0u64),
+                    r14: *regs.get("r14").unwrap_or(&0u64),
+                    r13: *regs.get("r13").unwrap_or(&0u64),
+                    r12: *regs.get("r12").unwrap_or(&0u64),
+                    rbp: *regs.get("rbp").unwrap_or(&0u64),
+                    rbx: *regs.get("rbx").unwrap_or(&0u64),
+                    r11: *regs.get("r11").unwrap_or(&0u64),
+                    r10: *regs.get("r10").unwrap_or(&0u64),
+                    r9: *regs.get("r19").unwrap_or(&0u64),
+                    r8: *regs.get("r18").unwrap_or(&0u64),
+                    rax: *regs.get("rax").unwrap_or(&0u64),
+                    rcx: *regs.get("rcx").unwrap_or(&0u64),
+                    rdx: *regs.get("rdx").unwrap_or(&0u64),
+                    rsi: *regs.get("rsi").unwrap_or(&0u64),
+                    rdi: *regs.get("rdi").unwrap_or(&0u64),
+                    rip: *regs.get("rip").unwrap_or(&0u64),
+                    cs: *regs.get("cs").unwrap_or(&0u64),
+                    eflags: *regs.get("eflags").unwrap_or(&0u64),
+                    rsp: *regs.get("rsp").unwrap_or(&0u64),
+                    ss: *regs.get("ss").unwrap_or(&0u64),
+                    fs_base: *regs.get("fsbase").unwrap_or(&0u64),
+                    gs_base: *regs.get("gsbase").unwrap_or(&0u64),
+                    ds: *regs.get("ds").unwrap_or(&0u64),
+                    es: *regs.get("es").unwrap_or(&0u64),
+                    fs: *regs.get("fs").unwrap_or(&0u64),
+                    gs: *regs.get("gs").unwrap_or(&0u64),
+                }
+            }
+
+            0
+        })
+        .unwrap_or(-1)
+}
+
 #[no_mangle]
 pub extern "C" fn read_memory(ctx: *const libc::c_void, addr: u64, value: *mut i64) -> i64 {
     Context::from(ctx as u64)
