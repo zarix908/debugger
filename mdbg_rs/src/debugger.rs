@@ -181,6 +181,7 @@ impl<'a> Debugger<'a> {
                     _ => Err(format!("Uknown SIGTRAP code: {}", siginfo.si_code))?,
                 }
             }
+            wait::WaitStatus::Stopped(_, Signal::SIGSTOP) => (), // debugger attached
             wait::WaitStatus::Signaled(_, Signal::SIGSEGV, _) => {
                 Err("Segfault occured.")?;
             }
